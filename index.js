@@ -7,7 +7,7 @@ require('dotenv').config();
 let db = new sqlite3.Database('./titles.db');
 const jellyseerrAPI = process.env.OVERSEERR_API_URL + "/api/v1";
 const jellyseerrAPIKey = process.env.OVERSEERR_API_KEY; 
-const watchlistURL = "https://www.google.com/collections/s/list/beVVBviyfvpRJBJkqtgCru_qG1P41g/23J1HXUNruA";
+const watchlistURL = process.env.WATCHLIST_URL; 
 db.serialize(() => {
     db.run("CREATE TABLE IF NOT EXISTS titles (title TEXT)");
 });
@@ -31,7 +31,9 @@ if (!process.env.OVERSEERR_API_KEY) {
 async function main() {
 
     db = new sqlite3.Database('./titles.db');
-    let titles = await getTitles();
+    let watchlistData = await getTitles();
+    let titles = watchlistData.titles;
+    let links = watchlistData.links;
     let count = await getTitleCount(db);
     // Check if there's a new title in the list
     if(count < titles.length){
@@ -45,7 +47,7 @@ async function main() {
                 // Request only if database is populated and request is new
                 if (count > 0) {
                     try {
-                        requestMedia(await searchMedia(element));
+                        requestMedia(await searchMedia(element, links, titles));
                     }
                     catch (error) {
                         console.log(error);
@@ -62,11 +64,11 @@ async function main() {
             }
         });
     }
-    console.log(`Completed Polling, waiting ${process.env.POLL_INTERVAL} seconds till next poll`);
+    //console.log(`Completed Polling, waiting ${process.env.POLL_INTERVAL} seconds till next poll`);
     db.close(); 
 
 
-    // Sleep for 30 seconds and call recursively
+    // Sleep and call recursively
     setTimeout(main, parseInt(process.env.POLL_INTERVAL) * 1000);
   }
 
@@ -77,8 +79,8 @@ async function main() {
 
 // Sends request to jellyseerr
 function requestMedia(media) {
-    console.log(media.mediaType)
-    axios.post(jellyseerrAPI + '/request',{
+    console.log(`New Request: \n Type: ${media.mediaType} \n ID: ${media.mediaId}`);
+    axios.post(jellyseerrAPI + '/request', {
         mediaType: media.mediaType,
         mediaId: media.mediaId,
         seasons: media.seasons, 
@@ -89,6 +91,7 @@ function requestMedia(media) {
         }    
     })
     .then(function (response) {
+        console.log("Media Requested Sucessfully")
         console.log(response.data);
       })
     .catch(function (error) {
@@ -96,17 +99,20 @@ function requestMedia(media) {
     });
 }
 
-// Searchs for  ID and other relevant info for media 
-async function searchMedia(name){
+// Searchs for  ID and other relevant info for media - Takes name of media, array of links to google pages and array of titles
+async function searchMedia(name, links, titles){
 
 
     try {
-        let media = await getMediaInfo(name);
+
+        let titleIndex = titles.indexOf(name);
+        let media = await scrapeMediaInfo(links[titleIndex]); 
+        
         // Variable of name with all special characters removed 
-        let nameClean = encodeURIComponent(media.title); 
+        let nameClean = encodeURIComponent(name); 
         let type = media.type;
         let year = media.year;
-        console.log("TYPE: " + type)
+        // Set ID based on media type 
         let id = type == "tv" ?  await getTvID(nameClean, year) : await getMovieID(nameClean, year);
         let output = {
             mediaType: type, 
@@ -121,19 +127,6 @@ async function searchMedia(name){
     }
 
 }
-
-// async function getNoSeasons(id){
-//     try {
-//         const response = await axios.get(`https://api.themoviedb.org/3/tv/${id}`, {
-//             headers: {
-//                 Authorization: `Bearer ${process.env.TMDB_API_KEY}`
-//             }
-//         });   
-//         return parseInt(response.data.number_of_seasons);
-    
-//     } catch (err) { console.log(err); }
-    
-// }
 
 
 // Get ID of movie from TMDB 
@@ -194,30 +187,13 @@ async function isNewTitle(db, title) {
         });
     });
 }
-// Gets required info from google watchlist and aggregates it into an object
-async function getMediaInfo(name){
-    try{
-        let titles = await getTitles();
-        let links = await getLinks();
-        let titleIndex = titles.indexOf(name);
 
-        let media = await scrapeMediaInfo(links[titleIndex]); 
-        let title = titles[titleIndex];
-
-
-        return {title: title, year: media.year, type: media.type};
-    }
-    catch (error){
-       return {};
-    }
-
-}
 
 // Get titles from Google watchlist 
 
 async function getTitles () {
     const response = await axios.get(watchlistURL); 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         try {
             
             let HTML = response.data; 
@@ -228,19 +204,16 @@ async function getTitles () {
             let array = Array.from(docs);
             let titles =  array.map(titles => titles.textContent);
             
-            resolve(titles);
+            resolve({titles: titles, links: await getLinks(HTML)});
         } catch (err) { reject(err); }
     }); 
 }
 
 // Get all links to google page for each item in watchlist
-async function getLinks(){
-    const response = await axios.get(watchlistURL); 
+async function getLinks(HTML){
     return new Promise((resolve, reject) => {
         try {
                     
-            let HTML = response.data; 
-
             const { document } = new JSDOM(HTML).window
             
             const divs = document.getElementsByClassName("EHB20b");
@@ -291,24 +264,5 @@ async function scrapeMediaInfo(url){
 }
 
 
-async function test(){
-   // console.log(await scrapeMediaInfo("https://www.google.com/search?q=2001:+A+Space+Odyssey&stick=H4sIAAAAAAAAAONgVuLQz9U3sEguMQMAg3lAcgwAAAA"));
-
-    // try {
-    //     let token = await tvdbLogin();
-    //     const response = await axios.get("https://api4.thetvdb.com/v4/search?query=The Peripheral", {
-    //         headers: {
-    //             Authorization: `Bearer ${token}`
-    //         }
-    //     });   
-    //     console.log(response.data.data[0].id);
-    
-    // } catch (err) { console.log(err); }
-    // tvdbToken = await tvdbLogin();
-    // console.log(await getNoSeasons("71663"))
-    console.log(await scrapeMediaInfo("https://www.google.com/search?q=The+Peripheral&stick=H4sIAAAAAAAAAONgVuLQz9U3sEguMQMAg3lAcgwAAAA"));
-    
-}
-//test(); 
   main();
 
