@@ -33,9 +33,10 @@ async function main() {
     db = new sqlite3.Database('./titles.db');
     let watchlistData = await getTitles();
     let titles = watchlistData.titles;
-    let links = watchlistData.links;
+    let links  = watchlistData.links;
     let count = await getTitleCount(db);
     // Check if there's a new title in the list
+
     if(count < titles.length){
         titles.forEach(async element => { 
             // Only insert into DB if title is new
@@ -54,22 +55,35 @@ async function main() {
                         console.log("Media Request failed")
                     }
                 }
-                else {
-                    // Janky database intialisation
-                    console.log("First titles added, waiting 30 seconds till next poll");
-    
-                }
 
 
             }
         });
     }
+    else if (count > titles.length) {
+        let dbTitles = await getTitlesFromDB(db);
+        let dbArr = dbTitles.map(title => title['title']);
+        // Delete titles that have been removed from watchlist
+        // TODO: Fix issue where titles are not requested if added right after another title is being removed, causing count to be the same as dbArr.length
+        dbArr.forEach( element => {
+            if (!titles.includes(element)) {
+                const deleteQuery = db.prepare("DELETE FROM titles WHERE title = ?");
+                console.log(`Deleting ${element}`)
+                deleteQuery.run(element);
+                deleteQuery.finalize();
+            }
+        }) 
+    }
+    if (count == 0) {
+        console.log("Database is empty, populating with titles from watchlist");
+    }
     //console.log(`Completed Polling, waiting ${process.env.POLL_INTERVAL} seconds till next poll`);
     db.close(); 
 
+    let delay = (parseInt(process.env.POLL_INTERVAL) * 1000) * (Math.random()+1);
 
     // Sleep and call recursively
-    setTimeout(main, parseInt(process.env.POLL_INTERVAL) * 1000);
+    setTimeout(main, delay);
   }
 
 
@@ -188,6 +202,17 @@ async function isNewTitle(db, title) {
     });
 }
 
+// Get all titles from DB
+async function getTitlesFromDB(db) {
+    return new Promise((resolve, reject) => {
+        let query = `SELECT title FROM titles`;
+        db.all(query,(err, rows) => {
+            if (err) reject(err); // I assume this is how an error is thrown with your db callback
+            resolve(rows);
+        });
+    });
+}
+
 
 // Get titles from Google watchlist 
 
@@ -242,7 +267,7 @@ async function scrapeMediaInfo(url){
         spans.forEach(element => {
             const yearPattern = /\b\d{4}\b/g;
             let text = element.textContent;
-            if(text.includes("season")){
+            if(text.includes("season") || text.includes ("series")){
                 mediaType = "tv"; 
             }
             else {

@@ -1,0 +1,11 @@
+# Docker compose 
+version: "1.0"
+services: 
+  watcher:
+    cap_add: 
+      - SYS_ADMIN 
+    image: ghcr.io/ashmantis1/watcher:latest
+    container_name: watcher
+    env_file:
+      - ../.env
+    restart: unless-stopped
