@@ -10,7 +10,7 @@ RUN apt-get update \
     && groupadd -r pptruser && useradd -rm -g pptruser -G audio,video pptruser
 USER pptruser
 WORKDIR /home/pptruser
-COPY package.json ./
+COPY src/package.json ./
 RUN npm install
-COPY index.js ./
+COPY src/index.js ./
 CMD ["node", "index.js"]
